@@ -9,13 +9,13 @@ import (
 	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/types"
+	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 )
 
 type controllerServer struct {
 	*csicommon.DefaultControllerServer
 }
-
-var volTags = make(map[string]string)
 
 func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	volName := req.GetName()
@@ -23,30 +23,49 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Error(codes.InvalidArgument, "Volume name not provided")
 	}
 
-	// Volume already exists, so returns it
-	if volID, ok := volTags[volName]; ok {
-		return &csi.CreateVolumeResponse{
-			Volume: &csi.Volume{
-				Id: volID,
-			},
-		}, nil
+	// TODO: magic number?
+	// Default volume size is 4 GiB
+	volSizeBytes := int64(4 * 1024 * 1024 * 1024)
+	if req.GetCapacityRange() != nil {
+		volSizeBytes = int64(req.GetCapacityRange().GetRequiredBytes())
 	}
+	volSizeGB := int(volumeutil.RoundUpSize(volSizeBytes, 1024*1024*1024))
 
 	cloud, err := aws.GetAWSProvider()
 	if err != nil {
 		glog.V(3).Infof("Failed to get provider: %v", err)
-		return nil, err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	opts := &aws.VolumeOptions{CapacityGB: 4}
-	v, err := cloud.CreateDisk(opts)
+	const volNameTagKey = "VolumeName"
+	volumes, err := cloud.GetVolumesByTagName(volNameTagKey, volName)
 	if err != nil {
-		glog.V(3).Infof("Failed to create volume: %v", err)
-		return nil, nil
+		return nil, status.Error(codes.Internal, err.Error())
 	}
-	volID := string(v)
 
-	volTags[volName] = volID
+	var volID string
+	if len(volumes) == 1 {
+		volID = volumes[0]
+	} else if len(volumes) > 1 {
+		return nil, status.Error(codes.Internal, "multiple volumes reported by Cinder with same name")
+	} else {
+		v, err := cloud.CreateDisk(&aws.VolumeOptions{
+			CapacityGB: volSizeGB,
+			Tags:       map[string]string{volNameTagKey: volName},
+		})
+		if err != nil {
+			glog.V(3).Infof("Failed to create volume: %v", err)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		awsID, err := v.MapToAWSVolumeID()
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		volID = string(awsID)
+	}
+
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			Id: volID,
@@ -63,14 +82,10 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
 	}
 
-	if id, ok := volTags[volID]; ok {
-		volID = id
-	}
-
 	cloud, err := aws.GetAWSProvider()
 	if err != nil {
 		glog.V(3).Infof("Failed to get provider: %v", err)
-		return nil, err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	_, err = cloud.DeleteDisk(aws.KubernetesVolumeID(volID))
@@ -82,7 +97,27 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 }
 
 func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
-	return nil, nil
+	volID := req.GetVolumeId()
+	if len(volID) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
+	}
+
+	cloud, err := aws.GetAWSProvider()
+	if err != nil {
+		glog.V(3).Infof("Failed to get provider: %v", err)
+		return nil, status.Error(codes.InvalidArgument, "Failed to get provider")
+	}
+
+	nodeID := types.NodeName(req.GetNodeId())
+	devicePath, err := cloud.AttachDisk(aws.KubernetesVolumeID(volID), nodeID)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	pInfo := map[string]string{
+		"DevicePath": devicePath,
+	}
+	return &csi.ControllerPublishVolumeResponse{PublishInfo: pInfo}, nil
 }
 
 func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {

@@ -11,19 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/golang/glog"
 )
-
-//var (
-//once        sync.Once
-//configFile  string
-//AWSInstance *Cloud
-//)
-
-//func InitAWSProvider(cfg string) {
-//once.Do(func() { configFile = cfg })
-//}
 
 var (
 	AWSInstance *Cloud = nil
@@ -82,4 +73,22 @@ func GetAWSProvider() (*Cloud, error) {
 	aws := newAWSSDKProvider(creds)
 	return newAWSCloud(*cfg, aws)
 
+}
+
+func (c *Cloud) GetVolumesByTagName(tagKey, tagVal string) ([]string, error) {
+	volumes, err := c.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{})
+	if err != nil {
+		return nil, fmt.Errorf("uname to get volumes %v", err)
+	}
+
+	// TODO: fjb: can I trust all pointers here won't be nil?
+	var result []string
+	for _, volume := range volumes {
+		for _, tag := range volume.Tags {
+			if *tag.Key == tagKey && *tag.Value == tagVal {
+				result = append(result, *volume.VolumeId)
+			}
+		}
+	}
+	return result, nil
 }
