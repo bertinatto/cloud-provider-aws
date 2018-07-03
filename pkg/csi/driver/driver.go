@@ -1,72 +1,98 @@
 package driver
 
 import (
-	"github.com/golang/glog"
-	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
+	"context"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
 
 	"github.com/bertinatto/cloud-provider-aws/pkg/cloudprovider/providers/aws"
 	csi "github.com/container-storage-interface/spec/lib/go/csi/v0"
+	"github.com/golang/glog"
+	"google.golang.org/grpc"
 )
 
 const (
 	driverName    = "csi-aws"
 	driverVersion = "0.1"
+	vendorVersion = "0.1" //FIXME
 )
 
 type Driver struct {
 	endpoint string
 	nodeID   string
 
-	keyID     string
-	secretKey string
-	region    string
-
-	csiDriver *csicommon.CSIDriver
+	cloud aws.Volumes
+	srv   *grpc.Server
 }
 
-func NewDriver(endpoint, nodeID, key, secret, region string) *Driver {
+func NewDriver(cloud aws.Volumes, endpoint, nodeID string) *Driver {
 	glog.Infof("Driver: %v version: %v", driverName, driverVersion)
 
-	csiDriver := csicommon.NewCSIDriver(driverName, driverVersion, nodeID)
-
-	caps := []csi.ControllerServiceCapability_RPC_Type{
-		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
-		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
-	}
-	csiDriver.AddControllerServiceCapabilities(caps)
-
-	vcs := []csi.VolumeCapability_AccessMode_Mode{
-		csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
-	}
-	csiDriver.AddVolumeCapabilityAccessModes(vcs)
-
 	return &Driver{
-		endpoint:  endpoint,
-		keyID:     key,
-		secretKey: secret,
-		region:    region,
-		csiDriver: csiDriver,
+		endpoint: endpoint,
+		nodeID:   nodeID,
+		cloud:    cloud,
 	}
 }
 
-func NewControllerServer(d *Driver) *controllerServer {
-	return &controllerServer{
-		DefaultControllerServer: csicommon.NewDefaultControllerServer(d.csiDriver),
+func (d *Driver) Run() error {
+	scheme, addr, err := parseEndpoint(d.endpoint)
+	if err != nil {
+		return err
 	}
-}
 
-func NewNodeServer(d *Driver) *nodeServer {
-	return &nodeServer{
-		DefaultNodeServer: csicommon.NewDefaultNodeServer(d.csiDriver),
+	listener, err := net.Listen(scheme, addr)
+	if err != nil {
+		return err
 	}
-}
 
-func (d *Driver) Run() {
-	//aws.InitAWSProvider("/home/fjb/.aws/credentials")
-	aws.InitAWSProvider("")
-	csicommon.RunControllerandNodePublishServer(d.endpoint, d.csiDriver, NewControllerServer(d), NewNodeServer(d))
+	logErr := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		resp, err := handler(ctx, req)
+		if err != nil {
+			glog.Errorf("GRPC error: %v", err)
+		}
+		return resp, err
+	}
+	opts := []grpc.ServerOption{
+		grpc.UnaryInterceptor(logErr),
+	}
+	d.srv = grpc.NewServer(opts...)
+
+	csi.RegisterIdentityServer(d.srv, d)
+	csi.RegisterControllerServer(d.srv, d)
+	csi.RegisterNodeServer(d.srv, d)
+
+	glog.Infof("Listening for connections on address: %#v", listener.Addr())
+	return d.srv.Serve(listener)
 }
 
 func (d *Driver) Stop() {
-	return
+	d.srv.Stop()
+}
+
+func parseEndpoint(endpoint string) (string, string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", "", fmt.Errorf("could not parse endpoint: %v", err)
+	}
+
+	addr := path.Join(u.Host, filepath.FromSlash(u.Path))
+	if u.Host == "" {
+		addr = filepath.FromSlash(u.Path)
+	}
+
+	// TODO: validate other schemes
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "unix" {
+		if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
+			return "", "", fmt.Errorf("could not remove unix domain socket %q: %v", addr, err)
+		}
+	}
+
+	return scheme, addr, nil
 }
