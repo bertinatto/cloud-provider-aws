@@ -454,6 +454,8 @@ type Volumes interface {
 
 	// Expand the disk to new size
 	ResizeDisk(diskName KubernetesVolumeID, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
+
+	GetVolumesByTagName(tagKey, tagVal string) ([]string, error)
 }
 
 // InstanceGroups is an interface for managing cloud-managed instance groups / autoscaling instance groups

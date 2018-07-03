@@ -2,8 +2,6 @@ package aws
 
 import (
 	"fmt"
-	"io"
-	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -16,31 +14,8 @@ import (
 	"github.com/golang/glog"
 )
 
-var (
-	AWSInstance *Cloud = nil
-	configFile  string = ""
-)
-
-func InitAWSProvider(cfg string) {
-	configFile = cfg
-}
-
 func GetAWSProvider() (*Cloud, error) {
-	if AWSInstance != nil {
-		return AWSInstance, nil
-	}
-
-	var r io.Reader
-	if configFile != "" {
-		f, err := os.Open(configFile)
-		if err != nil {
-			return nil, fmt.Errorf("unable to open AWS config file: %v", err)
-		}
-		defer f.Close()
-		r = f
-	}
-
-	cfg, err := readAWSCloudConfig(r)
+	cfg, err := readAWSCloudConfig(nil)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read AWS config file: %v", err)
 	}
