@@ -8,7 +8,6 @@ import (
 	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/types"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
 )
 
@@ -80,21 +79,7 @@ func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest)
 }
 
 func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
-	volID := req.GetVolumeId()
-	if len(volID) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
-	}
-
-	nodeID := types.NodeName(req.GetNodeId())
-	devicePath, err := d.cloud.AttachDisk(aws.KubernetesVolumeID(volID), nodeID)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-
-	pInfo := map[string]string{
-		"DevicePath": devicePath,
-	}
-	return &csi.ControllerPublishVolumeResponse{PublishInfo: pInfo}, nil
+	return &csi.ControllerPublishVolumeResponse{}, nil
 }
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
