@@ -18,8 +18,8 @@ import (
 
 const (
 	driverName    = "csi-aws"
-	driverVersion = "0.1"
-	vendorVersion = "0.1" //FIXME
+	driverVersion = "0.0.1"
+	vendorVersion = "0.0.1" // FIXME
 )
 
 type Driver struct {
@@ -32,7 +32,6 @@ type Driver struct {
 
 func NewDriver(cloud aws.Volumes, endpoint, nodeID string) *Driver {
 	glog.Infof("Driver: %v version: %v", driverName, driverVersion)
-
 	return &Driver{
 		endpoint: endpoint,
 		nodeID:   nodeID,
@@ -82,16 +81,17 @@ func parseEndpoint(endpoint string) (string, string, error) {
 	}
 
 	addr := path.Join(u.Host, filepath.FromSlash(u.Path))
-	if u.Host == "" {
-		addr = filepath.FromSlash(u.Path)
-	}
 
-	// TODO: validate other schemes
 	scheme := strings.ToLower(u.Scheme)
-	if scheme == "unix" {
+	switch scheme {
+	case "tcp":
+	case "unix":
+		addr = path.Join("/", addr)
 		if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
 			return "", "", fmt.Errorf("could not remove unix domain socket %q: %v", addr, err)
 		}
+	default:
+		return "", "", fmt.Errorf("unsupported protocol: %s", scheme)
 	}
 
 	return scheme, addr, nil
