@@ -17,13 +17,13 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		return nil, status.Error(codes.InvalidArgument, "Volume name not provided")
 	}
 
-	// TODO: magic number?
-	// Default volume size is 4 GiB
-	volSizeBytes := int64(4 * 1024 * 1024 * 1024)
-	if req.GetCapacityRange() != nil {
-		volSizeBytes = int64(req.GetCapacityRange().GetRequiredBytes())
+	if req.GetCapacityRange() == nil {
+		return nil, status.Error(codes.InvalidArgument, "Volume size not provided")
 	}
-	volSizeGB := int(volumeutil.RoundUpSize(volSizeBytes, 1024*1024*1024))
+	roundSize := volumeutil.RoundUpSize(
+		req.GetCapacityRange().GetRequiredBytes(),
+		1024*1024*1024,
+	)
 
 	const volNameTagKey = "VolumeName"
 	volumes, err := d.cloud.GetVolumesByTagName(volNameTagKey, volName)
@@ -37,8 +37,9 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	} else if len(volumes) > 1 {
 		return nil, status.Error(codes.Internal, "multiple volumes with same name")
 	} else {
+		// TODO check for int overflow
 		v, err := d.cloud.CreateDisk(&aws.VolumeOptions{
-			CapacityGB: volSizeGB,
+			CapacityGB: int(roundSize),
 			Tags:       map[string]string{volNameTagKey: volName},
 		})
 		if err != nil {
@@ -56,10 +57,8 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
-			Id: volID,
-			//Attributes: map[string]string{
-			//"availability": "",
-			//},
+			Id:            volID,
+			CapacityBytes: roundSize * 1024 * 1024 * 1024,
 		},
 	}, nil
 }

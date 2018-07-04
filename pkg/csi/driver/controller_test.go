@@ -11,17 +11,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const (
-	project           = "test-project"
-	zone              = "test-zone"
-	node              = "test-node"
-	driver            = "test-driver"
-	defaultVolumeSize = 10
-)
+const defaultVolSize = 4
 
-// Create Volume Tests
-func TestCreateVolumeArguments(t *testing.T) {
-	// Define "normal" parameters
+func TestCreateVolume(t *testing.T) {
 	stdVolCap := []*csi.VolumeCapability{
 		{
 			AccessType: &csi.VolumeCapability_Mount{
@@ -32,11 +24,7 @@ func TestCreateVolumeArguments(t *testing.T) {
 			},
 		},
 	}
-	stdCapRange := &csi.CapacityRange{RequiredBytes: int64(20 * 1024 * 1024 * 1024)}
-	stdParams := map[string]string{
-		"zone": zone,
-		"type": "test-type",
-	}
+	stdCapRange := &csi.CapacityRange{RequiredBytes: GBToBytes(defaultVolSize)}
 
 	testCases := []struct {
 		name       string
@@ -47,64 +35,60 @@ func TestCreateVolumeArguments(t *testing.T) {
 		{
 			name: "success normal",
 			req: &csi.CreateVolumeRequest{
-				Name:               "vol-test-123",
+				Name:               "random-vol-name",
 				CapacityRange:      stdCapRange,
 				VolumeCapabilities: stdVolCap,
-				Parameters:         stdParams,
+				Parameters:         nil,
 			},
 			expVol: &csi.Volume{
-				CapacityBytes: GBToBytes(20),
-				Id:            project + "/" + zone + "/" + "test-vol",
+				CapacityBytes: GBToBytes(defaultVolSize),
+				Id:            "vol-test",
 				Attributes:    nil,
 			},
 		},
 	}
 
-	// Run test cases
 	for _, tc := range testCases {
 		t.Logf("Test case: %s", tc.name)
 		awsDriver := NewDriver(&aws.FakeCloudProvider{}, "", "")
 
 		resp, err := awsDriver.CreateVolume(context.TODO(), tc.req)
-		//check response
 		if err != nil {
-			serverError, ok := status.FromError(err)
+			srvErr, ok := status.FromError(err)
 			if !ok {
-				t.Fatalf("Could not get error status code from err: %v", serverError)
+				t.Fatalf("Could not get error status code from error: %v", srvErr)
 			}
-			if serverError.Code() != tc.expErrCode {
-				t.Fatalf("Expected error code: %v, got: %v", tc.expErrCode, serverError.Code())
+			if srvErr.Code() != tc.expErrCode {
+				t.Fatalf("Expected error code %d, got %d", tc.expErrCode, srvErr.Code())
 			}
 			continue
 		}
 		if tc.expErrCode != codes.OK {
-			t.Fatalf("Expected error: %v, got no error", tc.expErrCode)
+			t.Fatalf("Expected error %v, got no error", tc.expErrCode)
 		}
 
-		// Make sure responses match
 		vol := resp.GetVolume()
-		if vol == nil {
-			// If one is nil but not both
-			t.Fatalf("Expected volume %v, got nil volume", tc.expVol)
+		if vol == nil && tc.expVol != nil {
+			t.Fatalf("Expected volume %v, got nil", tc.expVol)
 		}
 
-		//if vol.GetCapacityBytes() != tc.expVol.GetCapacityBytes() {
-		//t.Fatalf("Expected volume capacity bytes: %v, got: %v", vol.GetCapacityBytes(), tc.expVol.GetCapacityBytes())
-		//}
+		if vol.GetCapacityBytes() != tc.expVol.GetCapacityBytes() {
+			t.Fatalf("Expected volume capacity bytes: %v, got: %v", tc.expVol.GetCapacityBytes(), vol.GetCapacityBytes())
+		}
 
-		//if vol.GetId() != tc.expVol.GetId() {
-		//t.Fatalf("Expected volume id: %v, got: %v", vol.GetId(), tc.expVol.GetId())
-		//}
+		if vol.GetId() != tc.expVol.GetId() {
+			t.Fatalf("Expected volume id: %v, got: %v", tc.expVol.GetId(), vol.GetId())
+		}
 
-		//for akey, aval := range tc.expVol.GetAttributes() {
-		//if gotVal, ok := vol.GetAttributes()[akey]; !ok || gotVal != aval {
-		//t.Fatalf("Expected volume attribute for key %v: %v, got: %v", akey, aval, gotVal)
-		//}
-		//}
-		//if tc.expVol.GetAttributes() == nil && vol.GetAttributes() != nil {
-		//t.Fatalf("Expected volume attributes to be nil, got: %#v", vol.GetAttributes())
-		//}
-
+		for expKey, expVal := range tc.expVol.GetAttributes() {
+			attrs := vol.GetAttributes()
+			if gotVal, ok := attrs[expKey]; !ok || gotVal != expVal {
+				t.Fatalf("Expected volume attribute for key %v: %v, got: %v", expKey, expVal, gotVal)
+			}
+		}
+		if tc.expVol.GetAttributes() == nil && vol.GetAttributes() != nil {
+			t.Fatalf("Expected volume attributes to be nil, got: %#v", vol.GetAttributes())
+		}
 	}
 }
 
