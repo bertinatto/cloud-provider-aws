@@ -17,7 +17,7 @@ func TestDriverSanity(t *testing.T) {
 	)
 
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
-		t.Fatalf("could not remote socket file %s: %v", socket, err)
+		t.Fatalf("could not remove socket file %s: %v", socket, err)
 	}
 
 	awsDriver := NewDriver(&aws.FakeCloudProvider{}, endpoint, "")
