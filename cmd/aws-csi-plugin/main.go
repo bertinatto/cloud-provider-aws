@@ -15,7 +15,7 @@ func main() {
 	)
 	flag.Parse()
 
-	cloudProvider, err := aws.GetAWSProvider()
+	cloudProvider, err := aws.NewCloudProvider()
 	if err != nil {
 		log.Fatalln(err)
 	}

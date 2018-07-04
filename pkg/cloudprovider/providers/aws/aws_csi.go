@@ -14,7 +14,7 @@ import (
 	"github.com/golang/glog"
 )
 
-func GetAWSProvider() (*Cloud, error) {
+func NewCloudProvider() (*Cloud, error) {
 	cfg, err := readAWSCloudConfig(nil)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read AWS config file: %v", err)
